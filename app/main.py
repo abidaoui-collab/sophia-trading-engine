@@ -1,58 +1,57 @@
-"""Sophia Railway bootstrap — monitoring only, with all trading disabled.
-
-This is intentionally not the legacy SQLite trading engine. Production paper-order
-execution must wait for a managed PostgreSQL implementation and tests.
-"""
+"""Sophia cloud read-only database probe. All order endpoints fail closed."""
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 import os
-
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
-ENGINE_MODE = os.environ.get("SOPHIA_ENGINE_MODE", "MONITOR_ONLY")
-if ENGINE_MODE != "MONITOR_ONLY":
-    raise RuntimeError("This bootstrap accepts MONITOR_ONLY only; no trading engine installed")
+if os.getenv('SOPHIA_ENGINE_MODE', 'MONITOR_ONLY') != 'MONITOR_ONLY':
+    raise RuntimeError('This version only supports MONITOR_ONLY')
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # No trading tasks or polling loops are started here.
     yield
 
-app = FastAPI(title="Sophia Cloud Monitoring Bootstrap", version="0.1.0", lifespan=lifespan,
-              docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title='Sophia Cloud DB Probe', version='0.2.0', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
-@app.get("/health")
+
+def db_check():
+    """Read-only probe; never expose connection details or exception messages."""
+    dsn = os.getenv('SOPHIA_DATABASE_URL')
+    if not dsn:
+        return {'connected': False, 'state': 'NOT_CONFIGURED'}
+    try:
+        import psycopg
+        with psycopg.connect(dsn, connect_timeout=5, options='-c default_transaction_read_only=on') as conn:
+            with conn.cursor() as cur:
+                cur.execute('select count(*) from sophia.orders')
+                count = cur.fetchone()[0]
+        return {'connected': True, 'state': 'CONNECTED_READ_ONLY', 'historical_orders': count}
+    except Exception:
+        return {'connected': False, 'state': 'CONNECTION_FAILED'}
+
+@app.get('/health')
 def health():
-    return {
-        "status": "ok", "engine_mode": "MONITOR_ONLY", "paper_orders_enabled": False,
-        "real_orders_enabled": False, "stop_manager_enabled": False,
-        "database_connected": False,
-        "utc": datetime.now(timezone.utc).isoformat(),
-    }
+    return {'status': 'ok', 'engine_mode': 'MONITOR_ONLY', 'paper_orders_enabled': False,
+            'real_orders_enabled': False, 'stop_manager_enabled': False,
+            'utc': datetime.now(timezone.utc).isoformat()}
 
-@app.get("/api/engine/status")
-def engine_status():
-    return {
-        "name": "Sophia Trading Engine", "state": "PREPARING",
-        "paper_orders_enabled": False, "real_orders_enabled": False,
-        "note": "Python API deployed separately; Postgres adapter and safety validation are not yet installed.",
-        "safety_gates": {"four_percent_equity_risk": "NOT_ENABLED", "seven_gateways": "NOT_ENABLED",
-                         "cooldown": "NOT_ENABLED", "durable_stops": "NOT_ENABLED",
-                         "reconciliation": "NOT_ENABLED"},
-    }
+@app.get('/api/engine/status')
+def status():
+    return {'name': 'Sophia Trading Engine', 'state': 'MONITOR_ONLY',
+            'paper_orders_enabled': False, 'real_orders_enabled': False,
+            'database': db_check(),
+            'safety_gates': {'four_percent_equity_risk': 'NOT_ENABLED',
+                             'seven_gateways': 'NOT_ENABLED', 'cooldown': 'NOT_ENABLED',
+                             'durable_stops': 'NOT_ENABLED', 'reconciliation': 'NOT_ENABLED'}}
 
-@app.post("/api/orders")
-def create_order():
-    # Fail closed regardless of request content or auth headers.
-    raise HTTPException(status_code=503, detail="Paper-order execution is disabled")
+@app.post('/api/orders')
+def orders():
+    raise HTTPException(status_code=503, detail='Paper orders disabled')
 
-@app.post("/api/positions/{position_id}/stop")
-def change_stop(position_id: str):
-    raise HTTPException(status_code=503, detail="Stop management is disabled")
+@app.post('/api/positions/{position_id}/stop')
+def stops(position_id: str):
+    raise HTTPException(status_code=503, detail='Stop management disabled')
 
-@app.get("/")
+@app.get('/')
 def root():
-    return {"service": "Sophia Trading Engine", "mode": "MONITOR_ONLY",
-            "message": "API status available at /health; no trading endpoints enabled."}
+    return {'service': 'Sophia Trading Engine', 'mode': 'MONITOR_ONLY', 'health': '/health'}
