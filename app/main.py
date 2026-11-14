@@ -14,20 +14,63 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title='Sophia Cloud DB Probe', version='0.2.0', lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 
+
 def db_check():
-    """Read-only probe; never expose connection details or exception messages."""
-    dsn = os.getenv('SOPHIA_DATABASE_URL')
+    """Read-only database probe with safe error classification."""
+    dsn = os.getenv("SOPHIA_DATABASE_URL")
     if not dsn:
-        return {'connected': False, 'state': 'NOT_CONFIGURED'}
+        return {"connected": False, "state": "NOT_CONFIGURED"}
+
     try:
         import psycopg
-        with psycopg.connect(dsn, connect_timeout=5, options='-c default_transaction_read_only=on') as conn:
+
+        with psycopg.connect(
+            dsn,
+            connect_timeout=5,
+            options="-c default_transaction_read_only=on",
+        ) as conn:
             with conn.cursor() as cur:
-                cur.execute('select count(*) from sophia.orders')
+                cur.execute("SELECT count(*) FROM sophia.orders")
                 count = cur.fetchone()[0]
-        return {'connected': True, 'state': 'CONNECTED_READ_ONLY', 'historical_orders': count}
-    except Exception:
-        return {'connected': False, 'state': 'CONNECTION_FAILED'}
+
+        return {
+            "connected": True,
+            "state": "CONNECTED_READ_ONLY",
+            "historical_orders": count,
+        }
+
+    except Exception as exc:
+        import socket
+        import ssl
+        import psycopg
+
+        sqlstate = getattr(exc, "sqlstate", None)
+
+        if sqlstate == "28P01":
+            category = "AUTHENTICATION_FAILED"
+        elif sqlstate == "42501":
+            category = "DATABASE_PERMISSION_DENIED"
+        elif sqlstate == "3D000":
+            category = "DATABASE_NOT_FOUND"
+        elif sqlstate == "42P01":
+            category = "TABLE_NOT_FOUND"
+        elif isinstance(exc, (TimeoutError, socket.timeout)):
+            category = "CONNECTION_TIMEOUT"
+        elif isinstance(exc, ssl.SSLError):
+            category = "SSL_ERROR"
+        elif isinstance(exc, psycopg.ProgrammingError):
+            category = "CONNECTION_CONFIGURATION_ERROR"
+        elif isinstance(exc, psycopg.OperationalError):
+            category = "NETWORK_OR_CONNECTION_ERROR"
+        else:
+            category = "UNKNOWN_DATABASE_ERROR"
+
+        return {
+            "connected": False,
+            "state": "CONNECTION_FAILED",
+            "error_category": category,
+        }
+
 
 @app.get('/health')
 def health():
