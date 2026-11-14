@@ -61,7 +61,11 @@ def db_check():
         elif isinstance(exc, psycopg.ProgrammingError):
             category = "CONNECTION_CONFIGURATION_ERROR"
         elif isinstance(exc, psycopg.OperationalError):
-            category = "NETWORK_OR_CONNECTION_ERROR"
+    category = (
+        "POSTGRES_SERVER_ERROR"
+        if getattr(exc, "sqlstate", None)
+        else "TRANSPORT_OR_HANDSHAKE_ERROR"
+    )
         else:
             category = "UNKNOWN_DATABASE_ERROR"
 
