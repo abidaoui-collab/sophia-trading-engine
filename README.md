@@ -1,19 +1,14 @@
-# Sophia Railway — DB connectivity probe (monitor-only)
+# Sophia Cloud v0.5 — private read-only journal API
 
-This package is an incremental update to the existing GitHub starter. Replace the repository's files with the extracted files, commit to `main`, and Railway will redeploy.
+Replace `app/main.py` in the existing GitHub repository with this file. Retain the existing Dockerfile and requirements.txt (`psycopg` must be installed). Commit to `main`; Railway redeploys.
 
-## Railway Variables
+Railway environment variables:
+- `SOPHIA_ENGINE_MODE=MONITOR_ONLY`
+- `SOPHIA_DATABASE_URL` (already configured)
+- `SOPHIA_JOURNAL_API_TOKEN` (random secret, at least 32 characters; set privately in Railway)
 
-Already set: `SOPHIA_ENGINE_MODE=MONITOR_ONLY`, `SOPHIA_PAPER_ORDERS_ENABLED=false`, `SOPHIA_REAL_ORDERS_ENABLED=false`, `SOPHIA_SUPABASE_URL`.
+Public `/health` and `/api/engine/status` remain available. `/api/journal` and `/api/account/overview` require `Authorization: Bearer <token>` and never return passwords. Missing/invalid token fails closed.
 
-To check the existing Supabase database, set **one secret variable in Railway's dashboard**, `SOPHIA_DATABASE_URL`, to the PostgreSQL connection string from the **Sophia Cloud** Supabase project's **Connect** panel. Use the **Session pooler** connection string for Railway, and replace the password placeholder with the project's actual database password. The secret should be entered **directly into Railway Variables**, not shared in chat, placed in GitHub, or included in a screenshot.
+Do **not** place the token in client-side JavaScript or GitHub. A future Vercel server-side proxy must handle authentication and access controls before exposing journal data to a browser.
 
-The probe enforces a read-only transaction setting and performs only `SELECT count(*) FROM sophia.orders`. It does not place paper trades or modify the database. The database credential itself may still have broad privileges: use a dedicated least-privilege DB role before enabling order functionality.
-
-## Checks
-
-- `/health`: confirms FastAPI is running (does **not** verify database).
-- `/api/engine/status`: returns `database.state=CONNECTED_READ_ONLY` and `historical_orders=20` when connected.
-- `POST /api/orders` and `POST /api/positions/{id}/stop`: always return HTTP 503.
-
-The API is publicly accessible at the generated Railway domain; never expose secrets in responses. No live or paper execution is included.
+Order endpoints remain disabled. Trade #17's invalid fill is still included in unadjusted gross P&L.
